@@ -1,19 +1,4 @@
-# run-report Specification
-
-## Purpose
-Defines the run report emitted by the agent at the end of every invocation, including required fields, artifact persistence, and token-cost reporting.
-## Requirements
-### Requirement: Run report emitted on every run
-The system SHALL emit a run report at the end of every invocation, regardless of outcome (success or failure). The report SHALL be printed to stdout in human-readable form AND persisted as `run-report.json` inside the run's workdir.
-
-#### Scenario: Successful run
-- **WHEN** the agent completes a run successfully
-- **THEN** a human-readable report is printed to stdout
-- **AND** a `run-report.json` file exists in the workdir
-
-#### Scenario: Failed run
-- **WHEN** the agent fails (e.g. provider error)
-- **THEN** a run report is still written to the workdir with `outcome` set to `"failure"` and any token usage observed before the failure
+## MODIFIED Requirements
 
 ### Requirement: Report contains all required fields
 The run report SHALL contain the following fields, none of which may be empty, null, or `"unknown"`: `goal`, `outcome`, `iterations`, `tokens` (with `prompt`, `completion`, `total`), `model`, `artifacts` (with at least `workdir` and `run_report` paths), `started_at`, `finished_at`, `max_iterations`, and `iteration_log` (a list with one entry per iteration attempted). Each `iteration_log` entry SHALL contain: `index` (1-based), `outcome` (`"success"`, `"failure"`, or `"sandbox_killed"`), `tokens` (prompt/completion/total for that iteration), and `artifacts` (paths to the iteration's generated code and test output, both inside the run's workdir).
@@ -35,13 +20,7 @@ The run report SHALL contain the following fields, none of which may be empty, n
 - **WHEN** a run terminates at the iteration cap
 - **THEN** `outcome` equals `"gave_up"`, `iterations` equals `max_iterations`, and `iteration_log` contains exactly that many entries
 
-### Requirement: Token cost reported in Moonshot tokens
-The report SHALL express token cost in Moonshot tokens as returned by the provider, alongside the model name used.
-
-#### Scenario: Tokens match provider response
-- **WHEN** the Moonshot client returns a usage object with prompt/completion/total counts
-- **THEN** the run report's `tokens` field equals those counts exactly
-- **AND** the report's `model` field equals the model name sent to Moonshot
+## ADDED Requirements
 
 ### Requirement: Per-iteration artifacts persisted under the workdir
 For every iteration attempted, the system SHALL write the generated code, the generated tests, and the captured pytest output to files inside the run's workdir, and SHALL reference those paths from the corresponding `iteration_log` entry.
@@ -50,4 +29,3 @@ For every iteration attempted, the system SHALL write the generated code, the ge
 - **WHEN** a multi-iteration run completes (success, failure, or gave-up)
 - **THEN** the workdir contains a per-iteration subdirectory for each attempt with the generated code, tests, and pytest stdout/stderr
 - **AND** the matching `iteration_log` entry's `artifacts` field points to those files
-

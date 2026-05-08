@@ -8,6 +8,27 @@ from typing import Literal
 from agent.llm.client import TokenUsage
 
 Outcome = Literal["success", "failure", "gave_up"]
+IterationOutcome = Literal["success", "failure", "sandbox_killed"]
+
+
+@dataclass
+class IterationEntry:
+    index: int
+    outcome: IterationOutcome
+    tokens: TokenUsage
+    artifacts: dict[str, str]
+
+    def to_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "outcome": self.outcome,
+            "tokens": {
+                "prompt": self.tokens.prompt,
+                "completion": self.tokens.completion,
+                "total": self.tokens.total,
+            },
+            "artifacts": dict(self.artifacts),
+        }
 
 
 @dataclass
@@ -20,6 +41,8 @@ class RunReport:
     artifacts: dict[str, str]
     started_at: str
     finished_at: str
+    max_iterations: int = 1
+    iteration_log: list[IterationEntry] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         missing = []
@@ -41,19 +64,36 @@ class RunReport:
                     missing.append(f"artifacts.{k}")
         if self.iterations is None or self.iterations < 1:
             missing.append("iterations")
+        if self.max_iterations is None or self.max_iterations < 1:
+            missing.append("max_iterations")
         if missing:
             raise ValueError(f"run report missing required fields: {', '.join(missing)}")
         if self.tokens.total != self.tokens.prompt + self.tokens.completion:
             raise ValueError("tokens.total must equal prompt + completion")
+        if self.iteration_log:
+            sum_total = sum(e.tokens.total for e in self.iteration_log)
+            if sum_total != self.tokens.total:
+                raise ValueError(
+                    f"top-level tokens.total ({self.tokens.total}) must equal sum of iteration tokens ({sum_total})"
+                )
 
     def to_dict(self) -> dict:
-        d = asdict(self)
-        d["tokens"] = {
-            "prompt": self.tokens.prompt,
-            "completion": self.tokens.completion,
-            "total": self.tokens.total,
+        return {
+            "goal": self.goal,
+            "outcome": self.outcome,
+            "iterations": self.iterations,
+            "max_iterations": self.max_iterations,
+            "tokens": {
+                "prompt": self.tokens.prompt,
+                "completion": self.tokens.completion,
+                "total": self.tokens.total,
+            },
+            "model": self.model,
+            "artifacts": dict(self.artifacts),
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "iteration_log": [e.to_dict() for e in self.iteration_log],
         }
-        return d
 
     def to_json(self, *, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, sort_keys=True)
@@ -63,17 +103,23 @@ def print_report(report: RunReport) -> None:
     d = report.to_dict()
     lines = [
         "=== Agent Run Report ===",
-        f"goal:        {d['goal']}",
-        f"outcome:     {d['outcome']}",
-        f"iterations:  {d['iterations']}",
-        f"model:       {d['model']}",
-        f"tokens:      prompt={d['tokens']['prompt']} completion={d['tokens']['completion']} total={d['tokens']['total']}",
-        f"started_at:  {d['started_at']}",
-        f"finished_at: {d['finished_at']}",
+        f"goal:           {d['goal']}",
+        f"outcome:        {d['outcome']}",
+        f"iterations:     {d['iterations']} / {d['max_iterations']}",
+        f"model:          {d['model']}",
+        f"tokens:         prompt={d['tokens']['prompt']} completion={d['tokens']['completion']} total={d['tokens']['total']}",
+        f"started_at:     {d['started_at']}",
+        f"finished_at:    {d['finished_at']}",
         "artifacts:",
     ]
     for k, v in d["artifacts"].items():
         lines.append(f"  {k}: {v}")
+    if d["iteration_log"]:
+        lines.append("iterations:")
+        for e in d["iteration_log"]:
+            lines.append(
+                f"  [{e['index']}] outcome={e['outcome']} tokens={e['tokens']['total']}"
+            )
     print("\n".join(lines))
 
 
