@@ -11,6 +11,16 @@ SCHEMA_VERSION = 1
 EXCERPT_MAX_BYTES = 4096
 TRUNCATION_MARKER = "\n...[truncated]"
 
+REQUIRED_FIELDS = (
+    "schema_version",
+    "run_id",
+    "iteration",
+    "timestamp",
+    "goal",
+    "error_type",
+    "root_cause_summary",
+)
+
 
 @dataclass(frozen=True)
 class FailureEntry:

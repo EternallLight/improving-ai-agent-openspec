@@ -43,7 +43,10 @@ def _positive_int(raw: str) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="agent", description="Self-improving coding agent.")
+    p = argparse.ArgumentParser(
+        prog="agent",
+        description="Self-improving coding agent. Subcommand: 'memory list' inspects persisted failure/success memory.",
+    )
     p.add_argument("goal", help="Natural-language coding task for the agent.")
     p.add_argument("--workdir", default=None, help="Directory for run artifacts (default: ./.agent-runs/<utc-timestamp>/).")
     p.add_argument("--model", default=None, help="Override the Moonshot model name.")
@@ -54,6 +57,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Circuit-breaker cap on solve-loop iterations (default: {DEFAULT_MAX_ITERATIONS}).",
     )
     return p
+
+
+def _build_memory_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="agent memory", description="Inspect persisted memory stores.")
+    sub = p.add_subparsers(dest="verb", required=True)
+    lst = sub.add_parser("list", help="List failure and success memory entries.")
+    lst.add_argument("--kind", choices=["failures", "successes", "all"], default="all")
+    lst.add_argument("--limit", type=_positive_int, default=None)
+    lst.add_argument("--goal", dest="goal_substring", default=None, help="Case-insensitive goal substring filter.")
+    return p
+
+
+def _run_memory(argv: list[str]) -> int:
+    from agent import memory_inspector
+
+    parser = _build_memory_parser()
+    args = parser.parse_args(argv)
+    if args.verb == "list":
+        return memory_inspector.run_list(
+            kind=args.kind,
+            goal_substring=args.goal_substring,
+            limit=args.limit,
+        )
+    return 1
 
 
 def _make_default_client(model: str | None) -> tuple[LLMClient, str]:
@@ -70,6 +97,12 @@ def main(
     sandbox_factory=None,
 ) -> int:
     _load_dotenv()
+    if argv is not None:
+        eff_argv = argv
+    else:
+        eff_argv = sys.argv[1:]
+    if eff_argv and eff_argv[0] == "memory":
+        return _run_memory(eff_argv[1:])
     parser = _build_parser()
     args = parser.parse_args(argv)
 

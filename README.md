@@ -22,6 +22,19 @@ The run report's `outcome` field is one of:
 - `gave_up` — circuit breaker hit `max_iterations` without success. Exit code non-zero; stderr contains `gave up after N iterations`.
 - `failure` — unexpected error before/around the loop (e.g. missing API key). Exit code non-zero.
 
+### Inspecting memory
+
+After runs persist failures and successes under `~/.agent/memory` (override with `AGENT_MEMORY_DIR`), list them with:
+
+```bash
+agent memory list                              # newest-first across both stores
+agent memory list --kind failures              # failures only
+agent memory list --kind successes --limit 5   # 5 newest successes
+agent memory list --goal add                   # case-insensitive goal substring filter
+```
+
+The command is read-only and never invokes the solve loop. Output is a compact `kind / timestamp / iters / goal / summary` table.
+
 ### Run report
 
 Written to `<workdir>/run-report.json` with per-iteration entries under `iteration_log`. Each entry references its generated `code.py`, `test_code.py`, and captured `pytest.stdout`/`pytest.stderr` under `<workdir>/iter-<N>/`.
