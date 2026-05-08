@@ -20,7 +20,15 @@ Return your answer as exactly two fenced Python code blocks, in this order:
 
 Do not include any other code blocks. Tests must be runnable with `pytest` and must import from `solution`."""
 
-REFLECT_SYSTEM = """You are reviewing a failing pytest run. Produce a short root-cause summary (2-4 sentences) explaining what went wrong and what the next attempt should change. Do not write code."""
+REFLECT_SYSTEM = """You are reviewing a failing pytest run. Produce a structured reflection.
+
+Return EXACTLY one fenced ```json code block containing an object with these fields, all non-empty strings:
+- "error_type": short classifier (e.g. "AssertionError", "ImportError", "SandboxTimeout")
+- "root_cause_summary": 2-4 sentence explanation of what went wrong
+- "code_or_assumptions": the specific lines/assumptions involved (short snippet or pointer)
+- "next_hypothesis": what the next attempt should change
+
+Do not write any code outside the JSON block."""
 
 
 def build_generate_prompt(goal: str, reflections: list[Reflection]) -> list[dict]:
@@ -61,7 +69,7 @@ Pytest output (truncated):
 {pytest_output}
 ```
 
-Summarize the root cause of the failure in 2-4 sentences."""
+Return the structured JSON reflection as instructed."""
     return [
         {"role": "system", "content": REFLECT_SYSTEM},
         {"role": "user", "content": user},

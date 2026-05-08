@@ -73,6 +73,8 @@ def test_cli_success_with_fake_client(tmp_path):
     assert data["iteration_log"][0]["outcome"] == "success"
     for k in ("workdir", "run_report"):
         assert data["artifacts"][k]
+    assert data["failure_entries"] == {"count": 0, "persistent_paths": [], "workdir_paths": []}
+    assert not (tmp_path / "failures").exists()
 
 
 def test_cli_gave_up_exits_nonzero_with_stderr(tmp_path, capsys):
@@ -97,6 +99,13 @@ def test_cli_gave_up_exits_nonzero_with_stderr(tmp_path, capsys):
     assert data["outcome"] == "gave_up"
     assert data["iterations"] == 2
     assert len(data["iteration_log"]) == 2
+    fe = data["failure_entries"]
+    assert fe["count"] == 2
+    assert len(fe["persistent_paths"]) == 1
+    assert len(fe["workdir_paths"]) == 2
+    for p in fe["workdir_paths"]:
+        assert Path(p).exists()
+    assert Path(fe["persistent_paths"][0]).exists()
 
 
 def test_cli_invalid_max_iterations_zero(tmp_path, capsys):

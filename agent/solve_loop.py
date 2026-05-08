@@ -1,13 +1,28 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
 from agent.extract import ExtractionError, extract
+from agent.failure_memory import (
+    FailureEntry,
+    FailureMemoryWriter,
+    SCHEMA_VERSION,
+    now_utc_iso,
+    resolve_persistent_root,
+    truncate_excerpt,
+)
 from agent.llm.client import LLMClient, TokenUsage
 from agent.prompting import build_generate_prompt, build_reflect_prompt
-from agent.reflection import Reflection, head, tail
+from agent.reflection import (
+    Reflection,
+    StructuredReflection,
+    head,
+    parse_structured_reflection,
+    tail,
+)
 from agent.report import IterationEntry
 from agent.sandbox import PathEscapeError, Sandbox, SandboxResult
 
@@ -26,6 +41,9 @@ class RunResult:
     iteration_log: list[IterationEntry]
     tokens: TokenUsage
     model: str
+    run_id: str = ""
+    failure_persistent_paths: list[str] = field(default_factory=list)
+    failure_workdir_paths: list[str] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
@@ -43,6 +61,8 @@ def run(
     workdir: Path,
     sandbox_factory: Optional[SandboxFactory] = None,
     model: Optional[str] = None,
+    run_id: Optional[str] = None,
+    persistent_root: Optional[Path] = None,
 ) -> RunResult:
     if config.max_iterations < 1:
         raise ValueError("max_iterations must be >= 1")
@@ -51,11 +71,27 @@ def run(
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
 
+    run_id = run_id or uuid.uuid4().hex
+    persistent_root = Path(persistent_root) if persistent_root else resolve_persistent_root()
+    failure_writer = FailureMemoryWriter(persistent_root, workdir, run_id=run_id)
+
     reflections: list[Reflection] = []
     iteration_log: list[IterationEntry] = []
     last_model = model or ""
     total_prompt = 0
     total_completion = 0
+
+    def _build_result(outcome: str, iters: int) -> RunResult:
+        return RunResult(
+            outcome=outcome,
+            iterations=iters,
+            iteration_log=iteration_log,
+            tokens=_usage(total_prompt, total_completion),
+            model=last_model,
+            run_id=run_id,
+            failure_persistent_paths=[str(p.resolve()) for p in failure_writer.persistent_paths],
+            failure_workdir_paths=[str(p.resolve()) for p in failure_writer.workdir_paths],
+        )
 
     for i in range(1, config.max_iterations + 1):
         iter_dir = workdir / f"iter-{i}"
@@ -80,6 +116,12 @@ def run(
             extracted = extract(gen_resp.content)
         except ExtractionError as e:
             summary = f"could not parse model output: {e}"
+            structured = StructuredReflection(
+                error_type="ExtractionError",
+                root_cause_summary=summary,
+                code_or_assumptions="model output did not contain two python code blocks",
+                next_hypothesis="re-emit two ```python blocks for solution and tests",
+            )
             reflections.append(
                 Reflection(
                     iteration=i,
@@ -90,6 +132,16 @@ def run(
                     summary=summary,
                 )
             )
+            _persist_failure(
+                failure_writer,
+                run_id=run_id,
+                iteration=i,
+                goal=goal,
+                structured=structured,
+                pytest_excerpt="",
+            )
+            mirror = failure_writer.workdir_mirror(i)
+            artifacts["failure_entry"] = str(mirror.resolve())
             iteration_log.append(
                 IterationEntry(
                     index=i,
@@ -151,15 +203,19 @@ def run(
         if path_escape_error is not None:
             iter_outcome = "failure"
             summary = f"filesystem escape rejected: {path_escape_error}"
+            default_error_type = "PathEscape"
         elif sandbox_result.killed:
             iter_outcome = "sandbox_killed"
             summary = "killed by sandbox (wall-clock limit exceeded)"
+            default_error_type = "SandboxTimeout"
         elif sandbox_result.exit_code == 0:
             iter_outcome = "success"
             summary = "tests passed"
+            default_error_type = ""
         else:
             iter_outcome = "failure"
             summary = f"pytest failed (exit_code={sandbox_result.exit_code})"
+            default_error_type = "TestFailure"
 
         # 5. Reflect on failure (LLM call) — skip on success
         if iter_outcome != "success":
@@ -174,9 +230,16 @@ def run(
                 iter_prompt_tokens += refl_resp.usage.prompt
                 iter_completion_tokens += refl_resp.usage.completion
                 last_model = refl_resp.model or last_model
-                summary = (refl_resp.content or summary).strip() or summary
+                structured = parse_structured_reflection(refl_resp.content or "")
+                summary = (structured.root_cause_summary or summary).strip() or summary
             except Exception as e:
                 summary = f"{summary}; reflection call failed: {type(e).__name__}: {e}"
+                structured = StructuredReflection(
+                    error_type=default_error_type or "ReflectionCallFailed",
+                    root_cause_summary=summary,
+                    code_or_assumptions=head(extracted.code) or "n/a",
+                    next_hypothesis="retry with corrected approach",
+                )
 
             reflections.append(
                 Reflection(
@@ -188,6 +251,20 @@ def run(
                     summary=summary,
                 )
             )
+
+            pytest_excerpt = (sandbox_result.stdout or "") + (
+                ("\n" + sandbox_result.stderr) if sandbox_result.stderr else ""
+            )
+            _persist_failure(
+                failure_writer,
+                run_id=run_id,
+                iteration=i,
+                goal=goal,
+                structured=structured,
+                pytest_excerpt=pytest_excerpt,
+            )
+            mirror = failure_writer.workdir_mirror(i)
+            artifacts["failure_entry"] = str(mirror.resolve())
 
         iteration_log.append(
             IterationEntry(
@@ -201,21 +278,33 @@ def run(
         total_completion += iter_completion_tokens
 
         if iter_outcome == "success":
-            return RunResult(
-                outcome="success",
-                iterations=i,
-                iteration_log=iteration_log,
-                tokens=_usage(total_prompt, total_completion),
-                model=last_model,
-            )
+            return _build_result("success", i)
 
-    return RunResult(
-        outcome="gave_up",
-        iterations=config.max_iterations,
-        iteration_log=iteration_log,
-        tokens=_usage(total_prompt, total_completion),
-        model=last_model,
+    return _build_result("gave_up", config.max_iterations)
+
+
+def _persist_failure(
+    writer: FailureMemoryWriter,
+    *,
+    run_id: str,
+    iteration: int,
+    goal: str,
+    structured: StructuredReflection,
+    pytest_excerpt: str,
+) -> None:
+    entry = FailureEntry(
+        schema_version=SCHEMA_VERSION,
+        run_id=run_id,
+        iteration=iteration,
+        timestamp=now_utc_iso(),
+        goal=goal,
+        error_type=structured.error_type or "Unknown",
+        root_cause_summary=structured.root_cause_summary or "(no summary)",
+        code_or_assumptions=structured.code_or_assumptions or "n/a",
+        next_hypothesis=structured.next_hypothesis or "retry",
+        failing_test_excerpt=truncate_excerpt(pytest_excerpt) or "(no output)",
     )
+    writer.write(entry)
 
 
 def _usage(prompt: int, completion: int) -> TokenUsage:

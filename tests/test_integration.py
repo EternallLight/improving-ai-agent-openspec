@@ -203,6 +203,15 @@ def _assert_complete(data: dict) -> None:
     for k in ("goal", "outcome", "iterations", "max_iterations", "model", "tokens", "started_at", "finished_at", "artifacts", "iteration_log"):
         assert k in data, f"missing {k}"
         assert data[k] not in (None, "", "unknown"), f"{k} is empty/unknown"
+    assert "failure_entries" in data
+    fe = data["failure_entries"]
+    assert isinstance(fe["count"], int)
+    failed_iters = sum(1 for e in data["iteration_log"] if e["outcome"] != "success")
+    assert fe["count"] == failed_iters
+    for p in fe["workdir_paths"]:
+        assert Path(p).exists()
+    for p in fe["persistent_paths"]:
+        assert Path(p).exists()
     assert data["tokens"]["total"] == data["tokens"]["prompt"] + data["tokens"]["completion"]
     if data["iteration_log"]:
         sum_total = sum(e["tokens"]["total"] for e in data["iteration_log"])

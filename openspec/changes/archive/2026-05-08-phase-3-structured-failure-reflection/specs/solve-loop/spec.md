@@ -1,0 +1,36 @@
+## MODIFIED Requirements
+
+### Requirement: In-memory only this phase
+The solve loop SHALL keep its iteration-to-iteration reflection state in process memory for prompt-feeding purposes, AND SHALL additionally persist a structured failure entry to disk for every failed iteration through the `failure-memory` capability before the next iteration begins. No other per-iteration state SHALL be written to a persistent store outside the run's workdir during this phase.
+
+#### Scenario: Failed iteration persists a structured entry
+- **WHEN** an iteration fails (test failure, sandbox kill, or parse error)
+- **THEN** a failure entry conforming to the failure-memory v1 schema is written to both the persistent root and the run workdir before the next iteration starts
+
+#### Scenario: Persistence survives circuit-breaker termination
+- **WHEN** the loop terminates via the circuit breaker after K failed iterations
+- **THEN** the persistent JSONL for the run contains exactly K entries
+
+#### Scenario: No other cross-run state written
+- **WHEN** a multi-iteration run completes
+- **THEN** no files other than failure-memory entries are written outside the run's workdir for the purpose of feeding future runs
+
+### Requirement: Generate → test → reflect iteration
+The system SHALL execute a solve loop in which each iteration (a) prompts the LLM to produce both implementation code and pytest tests for the goal, (b) runs the tests inside the sandbox, and (c) on test failure produces a structured reflection that is included in the prompt for the next iteration AND is the source for the persisted failure-memory entry.
+
+#### Scenario: Trivial task succeeds in one iteration
+- **WHEN** the agent is given a trivial single-file Python goal (e.g. "implement add(a, b)")
+- **THEN** the loop terminates after exactly 1 iteration with `outcome = "success"`
+- **AND** the run report records 1 iteration
+- **AND** no failure entries are written
+
+#### Scenario: Non-trivial task succeeds after multiple iterations
+- **WHEN** the first iteration's tests fail and the next iteration uses the reflection to correct the code
+- **THEN** the loop continues until tests pass and terminates with `outcome = "success"`
+- **AND** the run report records `iterations > 1`
+- **AND** each failed iteration's reflection was passed into the next iteration's prompt
+- **AND** one failure entry per failed iteration was persisted
+
+#### Scenario: Reflection is structured
+- **WHEN** an iteration's tests fail
+- **THEN** the reflection passed forward AND used to build the failure entry contains at minimum: iteration index, the failing test output (truncated), an LLM-produced short root-cause summary, the code or assumptions involved, and the next-iteration hypothesis

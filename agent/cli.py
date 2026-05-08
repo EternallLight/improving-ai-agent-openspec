@@ -106,6 +106,11 @@ def main(
             finished_at=_utc_now_iso(),
             max_iterations=args.max_iterations,
             iteration_log=result.iteration_log,
+            failure_entries={
+                "count": len(result.failure_workdir_paths),
+                "persistent_paths": list(result.failure_persistent_paths),
+                "workdir_paths": list(result.failure_workdir_paths),
+            },
         )
         write_report(report, workdir)
         print_report(report)

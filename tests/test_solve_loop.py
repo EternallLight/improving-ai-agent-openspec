@@ -75,6 +75,56 @@ def _fail() -> SandboxResult:
     return SandboxResult(exit_code=1, stdout="", stderr="AssertionError", killed=False, duration_seconds=0.1)
 
 
+def test_success_first_iter_writes_no_failures_dir(tmp_path):
+    fake = FakeLLMClient(responses=[GOOD_RESPONSE])
+    sandboxes = [FakeSandbox([_ok()])]
+    result = solve_loop.run(
+        goal="implement add",
+        config=solve_loop.SolveConfig(max_iterations=3),
+        llm_client=fake,
+        workdir=tmp_path,
+        sandbox_factory=lambda: sandboxes.pop(0),
+    )
+    assert result.outcome == "success"
+    assert result.failure_persistent_paths == []
+    assert result.failure_workdir_paths == []
+    assert not (tmp_path / "failures").exists()
+
+
+def test_k_failed_iters_yield_k_jsonl_lines_and_k_mirrors(tmp_path, monkeypatch):
+    import json
+    persistent = tmp_path / "mem"
+    monkeypatch.setenv("AGENT_MEMORY_DIR", str(persistent))
+    fake = FakeLLMClient(
+        responses=[
+            BAD_THEN_GOOD_FIRST,
+            '```json\n{"error_type":"AssertionError","root_cause_summary":"wrong op","code_or_assumptions":"return a-b","next_hypothesis":"use +"}\n```',
+            BAD_THEN_GOOD_FIRST,
+            '```json\n{"error_type":"AssertionError","root_cause_summary":"still wrong","code_or_assumptions":"return a-b","next_hypothesis":"use +"}\n```',
+        ]
+    )
+    sandboxes = [FakeSandbox([_fail()]), FakeSandbox([_fail()])]
+    result = solve_loop.run(
+        goal="g",
+        config=solve_loop.SolveConfig(max_iterations=2),
+        llm_client=fake,
+        workdir=tmp_path,
+        sandbox_factory=lambda: sandboxes.pop(0),
+    )
+    assert result.outcome == "gave_up"
+    assert len(result.failure_workdir_paths) == 2
+    assert len(result.failure_persistent_paths) == 1
+    jsonl = Path(result.failure_persistent_paths[0])
+    lines = [l for l in jsonl.read_text().splitlines() if l]
+    assert len(lines) == 2
+    parsed = [json.loads(l) for l in lines]
+    assert parsed[0]["iteration"] == 1
+    assert parsed[1]["iteration"] == 2
+    assert parsed[0]["error_type"] == "AssertionError"
+    for mp in result.failure_workdir_paths:
+        assert Path(mp).exists()
+
+
 def test_trivial_succeeds_in_one_iteration(tmp_path):
     fake = FakeLLMClient(responses=[GOOD_RESPONSE])
     sandboxes = [FakeSandbox([_ok()])]

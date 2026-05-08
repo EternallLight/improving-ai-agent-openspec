@@ -43,6 +43,9 @@ class RunReport:
     finished_at: str
     max_iterations: int = 1
     iteration_log: list[IterationEntry] = field(default_factory=list)
+    failure_entries: dict = field(
+        default_factory=lambda: {"count": 0, "persistent_paths": [], "workdir_paths": []}
+    )
 
     def __post_init__(self) -> None:
         missing = []
@@ -93,6 +96,11 @@ class RunReport:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "iteration_log": [e.to_dict() for e in self.iteration_log],
+            "failure_entries": {
+                "count": int(self.failure_entries.get("count", 0)),
+                "persistent_paths": list(self.failure_entries.get("persistent_paths", [])),
+                "workdir_paths": list(self.failure_entries.get("workdir_paths", [])),
+            },
         }
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -120,6 +128,10 @@ def print_report(report: RunReport) -> None:
             lines.append(
                 f"  [{e['index']}] outcome={e['outcome']} tokens={e['tokens']['total']}"
             )
+    fe = d.get("failure_entries", {"count": 0, "persistent_paths": []})
+    lines.append(f"failure_entries: count={fe['count']}")
+    for p in fe.get("persistent_paths", []):
+        lines.append(f"  persistent: {p}")
     print("\n".join(lines))
 
 
