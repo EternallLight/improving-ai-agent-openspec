@@ -2,6 +2,46 @@ from __future__ import annotations
 
 from agent.reflection import Reflection
 
+CODE_EXCERPT_MAX_BYTES = 2048
+
+
+def _truncate_bytes(text: str, max_bytes: int) -> str:
+    if not text:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore") + "\n...[truncated]"
+
+
+def render_prior_context_block(failures: list[dict], successes: list[dict]) -> str:
+    """Render prior-run context block. Returns empty string if both lists empty."""
+    if not failures and not successes:
+        return ""
+    parts: list[str] = ["## Prior-run context"]
+    if failures:
+        parts.append("\n### Prior failures on similar goals")
+        for f in failures:
+            parts.append(
+                "- goal: {goal}\n  error_type: {et}\n  root_cause_summary: {rcs}\n  next_hypothesis: {nh}".format(
+                    goal=f.get("goal", ""),
+                    et=f.get("error_type", ""),
+                    rcs=f.get("root_cause_summary", ""),
+                    nh=f.get("next_hypothesis", ""),
+                )
+            )
+    if successes:
+        parts.append("\n### Prior successful solutions on similar goals")
+        for s in successes:
+            excerpt = _truncate_bytes(s.get("solution_code", ""), CODE_EXCERPT_MAX_BYTES)
+            parts.append(
+                "- goal: {goal}\n  solution_code:\n```python\n{code}\n```".format(
+                    goal=s.get("goal", ""),
+                    code=excerpt,
+                )
+            )
+    return "\n".join(parts)
+
 GENERATE_SYSTEM = """You are a careful Python coding agent. Given a goal, produce:
 1. A solution module (`solution.py`) that implements the goal.
 2. A pytest test module (`test_solution.py`) that imports from `solution` and verifies the goal.
@@ -31,8 +71,16 @@ Return EXACTLY one fenced ```json code block containing an object with these fie
 Do not write any code outside the JSON block."""
 
 
-def build_generate_prompt(goal: str, reflections: list[Reflection]) -> list[dict]:
-    user_parts: list[str] = [f"Goal: {goal}"]
+def build_generate_prompt(
+    goal: str,
+    reflections: list[Reflection],
+    prior_context: str = "",
+) -> list[dict]:
+    user_parts: list[str] = []
+    if prior_context:
+        user_parts.append(prior_context)
+        user_parts.append("")
+    user_parts.append(f"Goal: {goal}")
     if reflections:
         user_parts.append("\nPrior failed attempts (most recent last):")
         for r in reflections:

@@ -15,7 +15,8 @@ from agent.failure_memory import (
     truncate_excerpt,
 )
 from agent.llm.client import LLMClient, TokenUsage
-from agent.prompting import build_generate_prompt, build_reflect_prompt
+from agent import memory_retrieval, success_memory
+from agent.prompting import build_generate_prompt, build_reflect_prompt, render_prior_context_block
 from agent.reflection import (
     Reflection,
     StructuredReflection,
@@ -44,6 +45,9 @@ class RunResult:
     run_id: str = ""
     failure_persistent_paths: list[str] = field(default_factory=list)
     failure_workdir_paths: list[str] = field(default_factory=list)
+    retrieved_failures: list[dict] = field(default_factory=list)
+    retrieved_successes: list[dict] = field(default_factory=list)
+    success_entry_path: Optional[str] = None
 
     @property
     def success(self) -> bool:
@@ -75,11 +79,27 @@ def run(
     persistent_root = Path(persistent_root) if persistent_root else resolve_persistent_root()
     failure_writer = FailureMemoryWriter(persistent_root, workdir, run_id=run_id)
 
+    retrieval = memory_retrieval.retrieve(goal, persistent_root)
+    retrieved_failure_payloads = [r.payload for r in retrieval.failures]
+    retrieved_success_payloads = [r.payload for r in retrieval.successes]
+    prior_context_block = render_prior_context_block(
+        retrieved_failure_payloads, retrieved_success_payloads
+    )
+
+    def _refs_to_dicts(refs) -> list[dict]:
+        return [{"path": r.path, "run_id": r.run_id, "score": r.score} for r in refs]
+
+    retrieved_failures_meta = _refs_to_dicts(retrieval.failures)
+    retrieved_successes_meta = _refs_to_dicts(retrieval.successes)
+
     reflections: list[Reflection] = []
     iteration_log: list[IterationEntry] = []
     last_model = model or ""
     total_prompt = 0
     total_completion = 0
+    success_entry_path: Optional[str] = None
+    last_extracted_code = ""
+    last_extracted_tests = ""
 
     def _build_result(outcome: str, iters: int) -> RunResult:
         return RunResult(
@@ -91,6 +111,9 @@ def run(
             run_id=run_id,
             failure_persistent_paths=[str(p.resolve()) for p in failure_writer.persistent_paths],
             failure_workdir_paths=[str(p.resolve()) for p in failure_writer.workdir_paths],
+            retrieved_failures=retrieved_failures_meta,
+            retrieved_successes=retrieved_successes_meta,
+            success_entry_path=success_entry_path,
         )
 
     for i in range(1, config.max_iterations + 1):
@@ -101,7 +124,8 @@ def run(
         artifacts: dict[str, str] = {}
 
         # 1. Generate
-        gen_messages = build_generate_prompt(goal, reflections)
+        iter_prior_context = prior_context_block if i == 1 else ""
+        gen_messages = build_generate_prompt(goal, reflections, iter_prior_context)
         gen_resp = llm_client.complete(gen_messages, model=model)
         last_model = gen_resp.model or last_model
         iter_prompt_tokens += gen_resp.usage.prompt
@@ -158,6 +182,8 @@ def run(
         tests_path = iter_dir / "test_code.py"
         code_path.write_text(extracted.code, encoding="utf-8")
         tests_path.write_text(extracted.tests, encoding="utf-8")
+        last_extracted_code = extracted.code
+        last_extracted_tests = extracted.tests
         artifacts["code"] = str(code_path.resolve())
         artifacts["tests"] = str(tests_path.resolve())
 
@@ -278,6 +304,21 @@ def run(
         total_completion += iter_completion_tokens
 
         if iter_outcome == "success":
+            try:
+                sp = success_memory.write(
+                    run_id=run_id,
+                    goal=goal,
+                    solution_code=last_extracted_code or "(empty)",
+                    tests=last_extracted_tests or "(empty)",
+                    iterations=i,
+                    model=last_model or "unknown",
+                    root=persistent_root,
+                )
+                success_entry_path = str(sp.resolve())
+            except Exception as e:
+                # A green run shouldn't be failed by a memory-persistence hiccup;
+                # surface the error in the iteration's artifacts instead.
+                artifacts["success_entry_error"] = f"{type(e).__name__}: {e}"
             return _build_result("success", i)
 
     return _build_result("gave_up", config.max_iterations)

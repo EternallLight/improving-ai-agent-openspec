@@ -200,6 +200,19 @@ def test_T9_run_report_complete_for_all_outcomes(tmp_path):
 
 
 def _assert_complete(data: dict) -> None:
+    # Phase 4: retrieved_context always present with two list buckets
+    assert "retrieved_context" in data
+    rc = data["retrieved_context"]
+    assert isinstance(rc.get("failures"), list)
+    assert isinstance(rc.get("successes"), list)
+    for ent in rc["failures"] + rc["successes"]:
+        for k in ("path", "run_id", "score"):
+            assert k in ent
+    assert "success_entry" in data
+    if data["outcome"] == "success":
+        assert data["success_entry"] and Path(data["success_entry"]).exists()
+    else:
+        assert data["success_entry"] is None
     for k in ("goal", "outcome", "iterations", "max_iterations", "model", "tokens", "started_at", "finished_at", "artifacts", "iteration_log"):
         assert k in data, f"missing {k}"
         assert data[k] not in (None, "", "unknown"), f"{k} is empty/unknown"

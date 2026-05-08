@@ -111,6 +111,11 @@ def main(
                 "persistent_paths": list(result.failure_persistent_paths),
                 "workdir_paths": list(result.failure_workdir_paths),
             },
+            retrieved_context={
+                "failures": list(result.retrieved_failures),
+                "successes": list(result.retrieved_successes),
+            },
+            success_entry=result.success_entry_path,
         )
         write_report(report, workdir)
         print_report(report)

@@ -18,6 +18,7 @@ def _make_report(**overrides) -> RunReport:
         artifacts={"workdir": "/tmp/x", "run_report": "/tmp/x/run-report.json"},
         started_at="2026-05-08T00:00:00.000000Z",
         finished_at="2026-05-08T00:00:01.000000Z",
+        success_entry="/tmp/x/successes/r.json",
     )
     defaults.update(overrides)
     return RunReport(**defaults)

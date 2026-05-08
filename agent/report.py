@@ -46,6 +46,10 @@ class RunReport:
     failure_entries: dict = field(
         default_factory=lambda: {"count": 0, "persistent_paths": [], "workdir_paths": []}
     )
+    retrieved_context: dict = field(
+        default_factory=lambda: {"failures": [], "successes": []}
+    )
+    success_entry: str | None = None
 
     def __post_init__(self) -> None:
         missing = []
@@ -71,6 +75,25 @@ class RunReport:
             missing.append("max_iterations")
         if missing:
             raise ValueError(f"run report missing required fields: {', '.join(missing)}")
+        rc = self.retrieved_context
+        if not isinstance(rc, dict) or "failures" not in rc or "successes" not in rc:
+            raise ValueError("retrieved_context must have failures and successes lists")
+        for bucket_name in ("failures", "successes"):
+            bucket = rc[bucket_name]
+            if not isinstance(bucket, list):
+                raise ValueError(f"retrieved_context.{bucket_name} must be a list")
+            for ent in bucket:
+                if not isinstance(ent, dict):
+                    raise ValueError(f"retrieved_context.{bucket_name} entries must be dicts")
+                for k in ("path", "run_id", "score"):
+                    if k not in ent:
+                        raise ValueError(f"retrieved_context.{bucket_name} entry missing {k}")
+        if self.outcome == "success":
+            if not self.success_entry:
+                raise ValueError("success_entry must be set on successful runs")
+        else:
+            if self.success_entry is not None:
+                raise ValueError("success_entry must be null on non-success runs")
         if self.tokens.total != self.tokens.prompt + self.tokens.completion:
             raise ValueError("tokens.total must equal prompt + completion")
         if self.iteration_log:
@@ -101,6 +124,11 @@ class RunReport:
                 "persistent_paths": list(self.failure_entries.get("persistent_paths", [])),
                 "workdir_paths": list(self.failure_entries.get("workdir_paths", [])),
             },
+            "retrieved_context": {
+                "failures": [dict(e) for e in self.retrieved_context.get("failures", [])],
+                "successes": [dict(e) for e in self.retrieved_context.get("successes", [])],
+            },
+            "success_entry": self.success_entry,
         }
 
     def to_json(self, *, indent: int = 2) -> str:
