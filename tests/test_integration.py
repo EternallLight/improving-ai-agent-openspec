@@ -119,7 +119,7 @@ def test_T2_nontrivial_multiple_iterations(tmp_path):
     assert "Iteration 1" in user["content"]
 
 
-def test_T4_sandbox_blocks_escape(tmp_path):
+def test_T5_sandbox_blocks_escape(tmp_path):
     from agent.sandbox import PathEscapeError
 
     with Sandbox() as sb:
@@ -129,7 +129,7 @@ def test_T4_sandbox_blocks_escape(tmp_path):
             sb.write_file("/etc/agent_pwn", "x = 1")
 
 
-def test_T4_sandbox_kills_runaway(tmp_path):
+def test_T5_sandbox_kills_runaway(tmp_path):
     fake = FakeLLMClient(content=INFINITE_LOOP, model="fake")
     result = solve_loop.run(
         goal="x",
@@ -142,7 +142,7 @@ def test_T4_sandbox_kills_runaway(tmp_path):
     assert result.iteration_log[0].outcome in ("sandbox_killed", "failure")
 
 
-def test_T5_circuit_breaker_clean_giveup(tmp_path, capsys):
+def test_T4_circuit_breaker_clean_giveup(tmp_path, capsys):
     fake = FakeLLMClient(content=ALWAYS_BROKEN, model="fake")
 
     def client_factory(model):

@@ -1,6 +1,6 @@
 # agent
 
-Self-improving coding agent. Phase 2 ships a solve loop: each iteration generates code + pytest tests via Moonshot, runs them in a process-level sandbox, and reflects on failure.
+Self-improving coding agent. Each iteration generates code + pytest tests via Moonshot, runs them in a process-level sandbox, and reflects on failure. Failures and successes persist across runs and are retrieved by similarity to seed future attempts.
 
 ## Usage
 
@@ -56,5 +56,5 @@ pytest
 ## Limits
 
 - Sandbox is process-level (POSIX `RLIMIT_CPU` + `os.setsid` + wall-clock kill). macOS/Linux only.
-- Network I/O is not blocked at the kernel level this phase.
-- Reflections are in-memory only; persistence and cross-run memory land in later phases.
+- Network I/O is not blocked at the kernel level.
+- Cross-run retrieval uses TF-IDF cosine over goal text — no embeddings.
